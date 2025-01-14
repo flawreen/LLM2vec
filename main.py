@@ -1,6 +1,7 @@
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
 from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, mean_squared_error
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import pandas as pd
 from llm2vec import LLM2Vec
@@ -16,16 +17,20 @@ tokenizer.padding_side = 'left'
 data = pd.read_csv('./bold_response_LH.csv')
 sentences = data['sentence']
 columns_to_predict = [
-    'lang_LH_AntTemp', 'lang_LH_IFG', 'lang_LH_IFGorb', 
+    'lang_LH_AntTemp', 'lang_LH_IFG', 'lang_LH_IFGorb',
     'lang_LH_MFG', 'lang_LH_PostTemp', 'lang_LH_netw'
 ]
 
 # Discretizează coloanele de predicție
-for column in columns_to_predict:
-    data[column] = (data[column] > data[column].median()).astype(int)
+# for column in columns_to_predict:
+#     data[column] = (data[column] > data[column].median()).astype(int)
+
+scaler = StandardScaler()
+data[columns_to_predict] = scaler.fit_transform(data[columns_to_predict])
 
 # Generează vectori
 llm2vec = LLM2Vec(model=model, tokenizer=tokenizer)
+
 
 def encode_sentence(sentence):
     vector = llm2vec.encode(sentence)
@@ -34,10 +39,11 @@ def encode_sentence(sentence):
         vector = np.mean(vector, axis=0)
     return vector
 
+
 sentence_vectors = np.array([encode_sentence(sentence) for sentence in sentences])
 
 # Initializează modelul de clasificare
-model = LogisticRegression()
+model = Ridge(alpha=1.0)
 
 # DataFrame pentru salvarea predicțiilor
 predictions_df = pd.DataFrame(sentences, columns=['sentence'])
@@ -48,24 +54,28 @@ for column in columns_to_predict:
     kf = KFold(n_splits=5)
     fold_predictions = []
     accuracies = []  # Mutat în interiorul buclei pentru fiecare coloană
+    mse_values = []
 
     for train_index, test_index in kf.split(sentence_vectors):
         X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
         y_train, y_test = labels.iloc[train_index], labels.iloc[test_index]
-        
+
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
-        
+
         # Salvăm predicțiile pentru fold-ul curent
         fold_predictions.extend(predictions)
-        
+
         # Calculăm acuratețea pentru acest fold
-        accuracy = accuracy_score(y_test, predictions)
-        accuracies.append(accuracy)
+        # accuracy = accuracy_score(y_test, predictions)
+        # accuracies.append(accuracy)
+        mse = mean_squared_error(y_test, predictions)
+        mse_values.append(mse)
 
     # Adaugăm predicțiile pentru această coloană în DataFrame
     predictions_df[column] = fold_predictions
-    print(f'Accuracy for predicting {column}: {np.mean(accuracies)}')
+    # print(f'Accuracy for predicting {column}: {np.mean(accuracies)}')
+    print(f'Mean Squared Error for predicting {column}: {np.mean(mse_values)}')
 
 # Salvăm predicțiile într-un CSV
 predictions_df.to_csv('predictions.csv', index=False)
