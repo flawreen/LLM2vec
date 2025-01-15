@@ -1,17 +1,15 @@
-from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
+from sentence_transformers import SentenceTransformer
+from sklearn.linear_model import Ridge
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_squared_error
-from sklearn.preprocessing import StandardScaler
 import numpy as np
 import pandas as pd
-from llm2vec import LLM2Vec
-from transformers import AutoModel, AutoTokenizer
+import torch
 
-# Initialize tokenizer and model
-model_name = "bert-base-uncased"
-model = AutoModel.from_pretrained(model_name)
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-tokenizer.padding_side = 'left'
+# Check for CUDA availability
+# torch_device = "cuda" if torch.cuda.is_available() else "cpu" ruleaza mai bine pe cpu din cauza preciziei numerice, o sa o fac sa fie mai apropiata in push-ul ulterior
+# Load SentenceTransformer model
+sbert_model = SentenceTransformer('all-MiniLM-L6-v2')  # Compact and fast model
 
 # Load data
 data = pd.read_csv('./bold_response_LH.csv')
@@ -21,61 +19,40 @@ columns_to_predict = [
     'lang_LH_MFG', 'lang_LH_PostTemp', 'lang_LH_netw'
 ]
 
-# Normalize columns to predict
-scaler = StandardScaler()
-data[columns_to_predict] = scaler.fit_transform(data[columns_to_predict])
+# Drop rows with missing values
+data.dropna(subset=columns_to_predict, inplace=True)
 
-# Generate vectors
-llm2vec = LLM2Vec(model=model, tokenizer=tokenizer)
-
-
-def encode_sentence(sentence):
-    vector = llm2vec.encode(sentence)
-    if len(vector.shape) == 2:
-        vector = vector.detach().numpy()
-        vector = np.mean(vector, axis=0)
-    return vector
-
-
-sentence_vectors = np.array([encode_sentence(sentence) for sentence in sentences])
+# Encode sentences using SentenceTransformers
+sentence_vectors = np.array(sbert_model.encode(sentences, convert_to_numpy=True))
 
 # Initialize Ridge model
-model = Ridge(alpha=5.3)
+ridge_model = Ridge(alpha=5.4)
 
-# DataFrame for saving predictions
-predictions_df = pd.DataFrame(sentences, columns=['sentence'])
+# Perform cross-validation
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+results = {col: {'mse': [], 'pearson': []} for col in columns_to_predict}
 
-# 5-fold cross-validation and saving predictions
-for column in columns_to_predict:
-    labels = data[column]
-    kf = KFold(n_splits=5)
-    fold_predictions = []
-    mse_values = []
-    pearson_values = []
+for train_index, test_index in kf.split(sentence_vectors):
+    X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
+    
+    for column in columns_to_predict:
+        y_train, y_test = data[column].iloc[train_index], data[column].iloc[test_index]
+        
+        # Train model
+        ridge_model.fit(X_train, y_train)
+        predictions = ridge_model.predict(X_test)
 
-    for train_index, test_index in kf.split(sentence_vectors):
-        X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
-        y_train, y_test = labels.iloc[train_index], labels.iloc[test_index]
-
-        model.fit(X_train, y_train)
-        predictions = model.predict(X_test)
-
-        # Save predictions for the current fold
-        fold_predictions.extend(predictions)
-
-        # Calculate MSE for this fold
+        # Calculate metrics
         mse = mean_squared_error(y_test, predictions)
-        mse_values.append(mse)
-
-        # Calculate Pearson correlation for this fold
         pearson_corr = np.corrcoef(y_test, predictions)[0, 1]
-        pearson_values.append(pearson_corr)
 
-    # Add predictions for this column to the DataFrame
-    predictions_df[column] = fold_predictions
-    print(f'Mean Squared Error for predicting {column}: {np.mean(mse_values)}')
-    print(f'Pearson Correlation for predicting {column}: {np.mean(pearson_values)}')
+        results[column]['mse'].append(mse)
+        results[column]['pearson'].append(pearson_corr)
 
-# Save predictions to a CSV
-predictions_df.to_csv('predictions.csv', index=False)
-print("Predictions have been saved in 'predictions.csv'.")
+# Report results
+for column in columns_to_predict:
+    mean_mse = np.mean(results[column]['mse'])
+    mean_pearson = np.mean(results[column]['pearson'])
+    print(f"Column: {column}")
+    print(f"  Mean MSE: {mean_mse:.4f}")
+    print(f"  Mean Pearson: {mean_pearson:.4f}")
