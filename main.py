@@ -1,19 +1,19 @@
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge
 from sklearn.model_selection import KFold
-from sklearn.metrics import accuracy_score, mean_squared_error
+from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 import pandas as pd
 from llm2vec import LLM2Vec
 from transformers import AutoModel, AutoTokenizer
 
-# Initializează tokenizer și model
+# Initialize tokenizer and model
 model_name = "bert-base-uncased"
 model = AutoModel.from_pretrained(model_name)
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.padding_side = 'left'
 
-# Încarcă datele
+# Load data
 data = pd.read_csv('./bold_response_LH.csv')
 sentences = data['sentence']
 columns_to_predict = [
@@ -21,14 +21,11 @@ columns_to_predict = [
     'lang_LH_MFG', 'lang_LH_PostTemp', 'lang_LH_netw'
 ]
 
-# Discretizează coloanele de predicție
-# for column in columns_to_predict:
-#     data[column] = (data[column] > data[column].median()).astype(int)
-
+# Normalize columns to predict
 scaler = StandardScaler()
 data[columns_to_predict] = scaler.fit_transform(data[columns_to_predict])
 
-# Generează vectori
+# Generate vectors
 llm2vec = LLM2Vec(model=model, tokenizer=tokenizer)
 
 
@@ -42,19 +39,19 @@ def encode_sentence(sentence):
 
 sentence_vectors = np.array([encode_sentence(sentence) for sentence in sentences])
 
-# Initializează modelul de clasificare
-model = Ridge(alpha=1.0)
+# Initialize Ridge model
+model = Ridge(alpha=5.3)
 
-# DataFrame pentru salvarea predicțiilor
+# DataFrame for saving predictions
 predictions_df = pd.DataFrame(sentences, columns=['sentence'])
 
-# 5-fold cross-validation și salvarea predicțiilor
+# 5-fold cross-validation and saving predictions
 for column in columns_to_predict:
     labels = data[column]
     kf = KFold(n_splits=5)
     fold_predictions = []
-    accuracies = []  # Mutat în interiorul buclei pentru fiecare coloană
     mse_values = []
+    pearson_values = []
 
     for train_index, test_index in kf.split(sentence_vectors):
         X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
@@ -63,20 +60,22 @@ for column in columns_to_predict:
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
 
-        # Salvăm predicțiile pentru fold-ul curent
+        # Save predictions for the current fold
         fold_predictions.extend(predictions)
 
-        # Calculăm acuratețea pentru acest fold
-        # accuracy = accuracy_score(y_test, predictions)
-        # accuracies.append(accuracy)
+        # Calculate MSE for this fold
         mse = mean_squared_error(y_test, predictions)
         mse_values.append(mse)
 
-    # Adaugăm predicțiile pentru această coloană în DataFrame
-    predictions_df[column] = fold_predictions
-    # print(f'Accuracy for predicting {column}: {np.mean(accuracies)}')
-    print(f'Mean Squared Error for predicting {column}: {np.mean(mse_values)}')
+        # Calculate Pearson correlation for this fold
+        pearson_corr = np.corrcoef(y_test, predictions)[0, 1]
+        pearson_values.append(pearson_corr)
 
-# Salvăm predicțiile într-un CSV
+    # Add predictions for this column to the DataFrame
+    predictions_df[column] = fold_predictions
+    print(f'Mean Squared Error for predicting {column}: {np.mean(mse_values)}')
+    print(f'Pearson Correlation for predicting {column}: {np.mean(pearson_values)}')
+
+# Save predictions to a CSV
 predictions_df.to_csv('predictions.csv', index=False)
-print("Predicțiile au fost salvate în 'predictions.csv'.")
+print("Predictions have been saved in 'predictions.csv'.")
