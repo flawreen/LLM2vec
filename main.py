@@ -1,6 +1,6 @@
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModel
 from llm2vec import LLM2Vec
-from sklearn.linear_model import Ridge
+from sklearn.ensemble import GradientBoostingRegressor  # Folosim GradientBoostingRegressor
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import StandardScaler
@@ -13,18 +13,18 @@ import torch
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# Initializează tokenizer și modelul Hugging Face (pentru cuantizare)
-model_name = "neuralmagic/Meta-Llama-3-8B-Instruct-quantized.w8a16"
+# Initializează tokenizer și modelul Hugging Face (pentru BERT)
+model_name = "microsoft/deberta-v3-base"  # Folosim BERT base uncased
 tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
+
+# Setează un token de padding, dacă nu există deja
 tokenizer.padding_side = "left"
 
-# Cuantizează și salvează modelul
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
 
-model =  AutoModelForCausalLM.from_pretrained(model_name)
-
-
-# Folosim modelul cuantizat cu LLM2Vec
-
+# Folosim modelul BERT cu LLM2Vec
 llm2vec = LLM2Vec(model=model, tokenizer=tokenizer, pooling_mode="mean")
 
 # Încarcă datele
@@ -39,12 +39,12 @@ columns_to_predict = [
 scaler = StandardScaler()
 data[columns_to_predict] = scaler.fit_transform(data[columns_to_predict])
 
-# Generează vectori folosind LLM2Vec (cu modelul cuantizat)
-print("Encoding sentences using the quantized LLM2Vec model...")
+# Generează vectori folosind LLM2Vec (cu modelul BERT)
+print("Encoding sentences using the BERT model...")
 sentence_vectors = llm2vec.encode(sentences, convert_to_numpy=True, device=device)
 
-# Convertește vectorii într-un tensor de tip float64 pe GPU
-sentence_vectors = torch.tensor(sentence_vectors, dtype=torch.float64).to(device)
+# Convertește vectorii într-un tensor de tip float32 pe GPU pentru performanță
+sentence_vectors = torch.tensor(sentence_vectors, dtype=torch.float32).to(device)
 
 # Verifică tipul și dispozitivul tensorilor
 print(f"Tensor type: {sentence_vectors.dtype}")
@@ -60,13 +60,13 @@ for column in columns_to_predict:
     fold_predictions = []
     mse_values = []
     pearson_values = []
-    alpha_values = [0.1, 1, 10, 100, 1000]  # Lista de valori alpha pe care vrem să le testăm
+    n_estimators_values = [10, 50]  # Lista de valori pentru numărul de estimatori
 
-    best_alpha = None
+    best_n_estimators = None
     best_mse = float('inf')
     best_pearson = float('-inf')
 
-    for alpha in alpha_values:
+    for n_estimators in n_estimators_values:
         fold_mse_values = []
         fold_pearson_values = []
 
@@ -74,10 +74,14 @@ for column in columns_to_predict:
             X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
             y_train, y_test = labels.iloc[train_index], labels.iloc[test_index]
 
-            # Antrenare și predicție cu fiecare valoare de alpha
-            ridge_model = Ridge(alpha=alpha)
-            ridge_model.fit(X_train.cpu().numpy(), y_train)
-            predictions = ridge_model.predict(X_test.cpu().numpy())
+            # Mutăm datele pe CPU pentru GradientBoostingRegressor
+            X_train_cpu = X_train.cpu().numpy()
+            X_test_cpu = X_test.cpu().numpy()
+
+            # Antrenare și predicție cu fiecare valoare de n_estimators
+            gb_model = GradientBoostingRegressor(n_estimators=n_estimators)  # Folosim GradientBoostingRegressor
+            gb_model.fit(X_train_cpu, y_train)
+            predictions = gb_model.predict(X_test_cpu)
 
             # Calculăm eroarea MSE
             mse = mean_squared_error(y_test, predictions)
@@ -87,38 +91,42 @@ for column in columns_to_predict:
             pearson_corr, _ = pearsonr(y_test, predictions)
             fold_pearson_values.append(pearson_corr)
 
-        # Calculăm media valorilor pentru MSE și Pearson pentru fiecare alpha
+        # Calculăm media valorilor pentru MSE și Pearson pentru fiecare n_estimators
         mean_mse = np.mean(fold_mse_values)
         mean_pearson = np.mean(fold_pearson_values)
 
         # Comparăm cu cele mai bune rezultate
         if mean_mse < best_mse:
             best_mse = mean_mse
-            best_alpha = alpha
+            best_n_estimators = n_estimators
 
         if mean_pearson > best_pearson:
             best_pearson = mean_pearson
-            best_alpha = alpha
+            best_n_estimators = n_estimators
 
-        # Salvăm rezultatele pentru această valoare de alpha
+        # Salvăm rezultatele pentru această valoare de n_estimators
         mse_values.append(mean_mse)
         pearson_values.append(mean_pearson)
 
-    # Afisăm cel mai bun alpha
-    print(f"Best alpha for predicting {column}: {best_alpha}")
+    # Afisăm cel mai bun n_estimators
+    print(f"Best n_estimators for predicting {column}: {best_n_estimators}")
     print(f"Best MSE: {best_mse}")
     print(f"Best Pearson Correlation: {best_pearson}")
 
-    # Re-antrenăm modelul cu cel mai bun alpha
-    ridge_model = Ridge(alpha=best_alpha)
+    # Re-antrenăm modelul cu cel mai bun n_estimators
+    gb_model = GradientBoostingRegressor(n_estimators=best_n_estimators)  # Folosim GradientBoostingRegressor cu cel mai bun n_estimators
     fold_predictions = []
 
     for train_index, test_index in kf.split(sentence_vectors):
         X_train, X_test = sentence_vectors[train_index], sentence_vectors[test_index]
         y_train, y_test = labels.iloc[train_index], labels.iloc[test_index]
 
-        ridge_model.fit(X_train.cpu().numpy(), y_train)
-        predictions = ridge_model.predict(X_test.cpu().numpy())
+        # Mutăm datele pe CPU pentru GradientBoostingRegressor
+        X_train_cpu = X_train.cpu().numpy()
+        X_test_cpu = X_test.cpu().numpy()
+
+        gb_model.fit(X_train_cpu, y_train)
+        predictions = gb_model.predict(X_test_cpu)
         fold_predictions.extend(predictions)
 
     # Adaugăm predicțiile pentru această coloană în DataFrame
@@ -127,5 +135,3 @@ for column in columns_to_predict:
 # Salvăm predicțiile într-un CSV
 predictions_df.to_csv('predictions.csv', index=False)
 print("Predicțiile au fost salvate în 'predictions.csv'.")
-
-
