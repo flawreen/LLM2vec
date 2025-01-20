@@ -1,8 +1,11 @@
 import pandas as pd
 import numpy as np
+from llm2vec import LLM2Vec
 from sklearn.metrics.pairwise import cosine_similarity
 import seaborn as sns
 import matplotlib.pyplot as plt
+from transformers import AutoModel, AutoTokenizer
+import torch
 
 # Representational Similarity Analysis
 
@@ -13,8 +16,18 @@ pred = pd.read_csv(pred_path)
 params = ['lang_LH_AntTemp', 'lang_LH_IFG', 'lang_LH_IFGorb', 'lang_LH_MFG', 'lang_LH_PostTemp']
 
 
-def get_encoded_sentences():  # placeholder pentru propozitiile cu llm2vec
-    pass
+def get_encoded_sentences():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_name = "microsoft/deberta-v3-base"  # Folosim BERT base uncased
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModel.from_pretrained(model_name)
+    tokenizer.padding_side = "left"
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    llm2vec = LLM2Vec(model=model, tokenizer=tokenizer, pooling_mode="mean")
+    return llm2vec.encode(data['sentence'].to_list(), convert_to_numpy=True, device=device)
 
 
 sentence_similarity = cosine_similarity(get_encoded_sentences())
