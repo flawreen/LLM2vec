@@ -142,4 +142,4 @@ Results of the analysis will be documented here, including:
 - LLM2Vec for facilitating sentence embedding alignment
 
 ---
-For more details, please refer to the source code in the repository.
+
