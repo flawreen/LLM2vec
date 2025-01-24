@@ -37,23 +37,22 @@ for column in params:
     brain_values = data[column].values.reshape(-1, 1)
     brain_similarity[column] = cosine_similarity(brain_values)
 
-rsa_results = {}
-for column in params:
+# Representational Similarity Analysis with scatter plots and regression
+plt.figure(figsize=(15, 10))
+for i, column in enumerate(params):
     sentence_sim_flat = sentence_similarity.flatten()
     brain_sim_flat = brain_similarity[column].flatten()
 
+    # Pearson correlation
     rsa_correlation = np.corrcoef(sentence_sim_flat, brain_sim_flat)[0, 1]
-    rsa_results[column] = rsa_correlation
 
-print("Representational Similarity Analysis (RSA) Results:")
-for column, rsa_corr in rsa_results.items():
-    print(f"  {column}: {rsa_corr:.4f}")
+    # Plot scatter with regression
+    plt.subplot(2, 3, i + 1)
+    sns.regplot(x=sentence_sim_flat, y=brain_sim_flat, scatter_kws={'s': 10}, line_kws={'color': 'red'})
+    plt.title(f"{column} (Pearson: {rsa_correlation:.4f})", fontsize=12)
+    plt.xlabel("Sentence Similarity", fontsize=10)
+    plt.ylabel("Brain Activation Similarity", fontsize=10)
 
-plt.figure(figsize=(10, 6))
-plt.bar(list(rsa_results.keys()), list(rsa_results.values()), color='skyblue')
-plt.xlabel('Brain Region Parameters', fontsize=14)
-plt.ylabel('RSA Correlation', fontsize=14)
-plt.title('Representational Similarity Analysis (RSA) Results', fontsize=16)
-plt.xticks(rotation=45, fontsize=12)
 plt.tight_layout()
+plt.suptitle("RSA Scatter Plots with Regression Lines", fontsize=16, y=1.02)
 plt.show()
